@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 import csv
 from datetime import datetime
+import json
 from pathlib import Path
 from typing import Iterable
 from xml.etree.ElementTree import iterparse
@@ -45,7 +46,15 @@ def _to_float(value: str | None) -> float:
     return float(text)
 
 
-def _dict_reader(path: Path, delimiter: str = ",") -> Iterable[dict[str, str]]:
+def _detect_delimiter(path: Path) -> str:
+    with path.open(encoding="utf-8-sig", errors="replace") as handle:
+        first_line = handle.readline()
+    return ";" if first_line.count(";") > first_line.count(",") else ","
+
+
+def _dict_reader(path: Path, delimiter: str | None = ",") -> Iterable[dict[str, str]]:
+    if delimiter is None:
+        delimiter = _detect_delimiter(path)
     with path.open(newline="", encoding="utf-8-sig") as handle:
         yield from csv.DictReader(handle, delimiter=delimiter)
 
@@ -91,8 +100,22 @@ def parse_fitbit(path: Path, study_id: str) -> DailyRows:
 
 def parse_garmin(path: Path, study_id: str) -> DailyRows:
     rows: DailyRows = {}
-    for row in _dict_reader(path):
-        date = parse_date(row.get("Date"))
+    with path.open(newline="", encoding="utf-8-sig") as handle:
+        reader = csv.reader(handle)
+        raw_rows = [row for row in reader if any((cell or "").strip() for cell in row)]
+    if not raw_rows:
+        return rows
+
+    header_index = 0
+    if raw_rows[0] and raw_rows[0][0].strip().lower() == "steps":
+        header_index = 1
+    if header_index >= len(raw_rows):
+        return rows
+
+    headers = [cell.strip() or "Date" for cell in raw_rows[header_index]]
+    for values in raw_rows[header_index + 1 :]:
+        row = dict(zip(headers, values))
+        date = parse_date(row.get("Date") or row.get(""))
         if not date:
             continue
         rows[(study_id, date)] = {
@@ -140,17 +163,54 @@ OURA_COLUMN_MAP = {
     "total_calories": "oura_total_calories",
 }
 
+OURA_LEGACY_COLUMN_MAP = {
+    "Steps": "oura_steps",
+    "Activity Burn": "oura_active_calories",
+    "Average MET": "oura_average_met_minutes",
+    "Equivalent Walking Distance": "oura_equivalent_walking_distance",
+    "High Activity Time": "oura_high_activity_time",
+    "Low Activity Time": "oura_low_activity_time",
+    "Medium Activity Time": "oura_medium_activity_time",
+    "Long Periods of Inactivity": "oura_inactivity_alerts",
+    "Non-wear Time": "oura_non_wear_time",
+    "Rest Time": "oura_resting_time",
+    "Activity Score": "oura_score",
+    "Total Burn": "oura_total_calories",
+}
+
+OURA_CONTRIBUTOR_COLUMNS = {
+    "Meet Daily Targets Score",
+    "Move Every Hour Score",
+    "Recovery Index Score",
+    "Stay Active Score",
+    "Training Frequency Score",
+    "Training Volume Score",
+}
+
 
 def parse_oura(path: Path, study_id: str) -> DailyRows:
     rows: DailyRows = {}
-    for row in _dict_reader(path, delimiter=";"):
-        date = parse_date(row.get("day"))
+    for row in _dict_reader(path, delimiter=None):
+        date = parse_date(row.get("day") or row.get("date"))
         if not date:
             continue
-        rows[(study_id, date)] = {
-            target: (row.get(source) or "").strip()
-            for source, target in OURA_COLUMN_MAP.items()
+        output_row = {}
+        for source, target in OURA_COLUMN_MAP.items():
+            value = (row.get(source) or "").strip()
+            if value:
+                output_row[target] = value
+        for source, target in OURA_LEGACY_COLUMN_MAP.items():
+            value = (row.get(source) or "").strip()
+            if value and not output_row.get(target):
+                output_row[target] = value
+        contributors = {
+            source: (row.get(source) or "").strip()
+            for source in sorted(OURA_CONTRIBUTOR_COLUMNS)
+            if (row.get(source) or "").strip()
         }
+        if contributors and not output_row.get("oura_contributors_json"):
+            output_row["oura_contributors_json"] = json.dumps(contributors, sort_keys=True)
+        rows[(study_id, date)] = output_row
     return rows
 
 

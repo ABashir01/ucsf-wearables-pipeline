@@ -117,7 +117,9 @@ def build_outputs(
         if source_file.source_type in {"demographics", "rmd"}:
             continue
         parser = PARSER_BY_SOURCE[source_file.source_type]
-        parsed_by_source.append((source_file.source_type, parser(source_file.path, source_file.study_id)))
+        parsed_rows = parser(source_file.path, source_file.study_id)
+        _update_manifest_parse_status(manifest_rows, source_file, len(parsed_rows))
+        parsed_by_source.append((source_file.source_type, parsed_rows))
     daily_rows = merge_daily_rows(demographics, parsed_by_source)
 
     daily_path = output_dir / DAILY_OUTPUT_NAME
@@ -316,6 +318,21 @@ def _write_csv(path: Path, columns: list[str], rows: list[dict[str, str]]) -> No
         writer.writeheader()
         for row in rows:
             writer.writerow({column: row.get(column, "") for column in columns})
+
+
+def _update_manifest_parse_status(
+    manifest_rows: list[dict[str, str]],
+    source_file: LocalSourceFile,
+    parsed_row_count: int,
+) -> None:
+    for row in manifest_rows:
+        if row["file_id"] == source_file.file_id and row["name"] == source_file.path.name:
+            if parsed_row_count == 0:
+                row["status"] = "empty"
+                row["message"] = "recognized source file but no data rows were parsed"
+            else:
+                row["message"] = f"parsed_rows={parsed_row_count}"
+            return
 
 
 def _upload_pipeline_owned_output(box: BoxClient, folder_id: str, path: Path, name: str) -> BoxItem:
