@@ -69,11 +69,23 @@ def parse_demographics(path: Path) -> dict[str, dict[str, str]]:
 
 def parse_fitbit(path: Path, study_id: str) -> DailyRows:
     rows: DailyRows = {}
+    minute_step_totals: defaultdict[str, float] = defaultdict(float)
     for row in _dict_reader(path):
-        date = parse_date(row.get("ActivityDay"))
-        if not date:
+        if "ActivityDay" in row and "StepTotal" in row:
+            date = parse_date(row.get("ActivityDay"))
+            if not date:
+                continue
+            rows[(study_id, date)] = {"fitbit_steps": (row.get("StepTotal") or "").strip()}
             continue
-        rows[(study_id, date)] = {"fitbit_steps": (row.get("StepTotal") or "").strip()}
+
+        if "timestamp" in row and "steps" in row:
+            date = parse_date(row.get("timestamp"))
+            if not date:
+                continue
+            minute_step_totals[date] += _to_float(row.get("steps"))
+
+    for date, total in minute_step_totals.items():
+        rows[(study_id, date)] = {"fitbit_steps": _clean_number(total)}
     return rows
 
 

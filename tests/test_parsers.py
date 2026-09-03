@@ -41,6 +41,15 @@ def test_simple_tracker_parsers():
     assert whoop[("032", "2026-06-12")]["whoop_steps"] == "7851"
 
 
+def test_fitbit_timestamp_steps_sample_when_available():
+    path = Path("C:/Users/ahadb/Downloads/De-Identified Data/De-Identified Data/Personal Tracker/FITriMSII_015 Fitbit.csv")
+    if not path.exists():
+        pytest.skip(f"sample file not available: {path}")
+    rows = parse_fitbit(path, "015")
+    assert len(rows) > 1
+    assert rows[("015", "2026-01-01")]["fitbit_steps"] == "3986"
+
+
 def test_oura_semicolon_sample():
     rows = parse_oura(require_sample("FITriMSII_036 Oura.csv"), "036")
     assert len(rows) == 152
